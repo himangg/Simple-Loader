@@ -1,68 +1,90 @@
 #include "loader.h"
+#include <stdio.h>
+#include <stdlib.h>
+#include <sys/mman.h>
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <fcntl.h>
+#include <unistd.h>
+#include <elf.h>
+
+typedef int (*StartFunction)();
 
 Elf32_Ehdr *ehdr;
-Elf32_Phdr *phdr;
 int fd;
 
-/*
- * release memory and other cleanups
- */
 void loader_cleanup() {
-  free (ehdr);
-  free (phdr);
+    // Add cleanup logic here if needed
 }
 
-/*
- * Load and run the ELF executable file
- */
-void load_and_run_elf(char** exe) {
-  fd = open(exe[1], O_RDONLY);
-  ehdr = (Elf32_Ehdr*)malloc(sizeof(Elf32_Ehdr));
-  phdr = (Elf32_Phdr*)malloc(sizeof(Elf32_Phdr));
-
-  if (fd==-1){
-    printf("ERROR IN OPENING THE ELF FILE\n");
-    return;
-  }
-
-  // 1. Load entire binary content into the memory from the ELF file.
-  if (read(fd, ehdr, sizeof(Elf32_Ehdr)) != sizeof(Elf32_Ehdr)) {
-        printf("ERROR IN READING ELF HEADER");
-        free(ehdr);
-        close(fd);
+void load_and_run_elf(char** exe_path) {
+    fd = open(exe_path[1], O_RDONLY);
+  
+    if(fd == -1) {
+        printf("ERROR IN OPENING THE ELF FILE\n");
         return;
     }
 
-  lseek(fd,ehdr->e_phoff,SEEK_SET);
-  read(fd,phdr,sizeof(Elf32_Phdr));
-  
-
-  // 2. Iterate through the PHDR table and find the section of PT_LOAD 
-  //    type that contains the address of the entrypoint method in fib.c
-  for (int i = 0; i < ehdr->e_phnum; ++i) {
-        
-    if (phdr->p_type == PT_LOAD && phdr->p_vaddr <= ehdr->e_entry && ehdr->e_entry < (phdr->p_vaddr + phdr->p_memsz)) {
-        break;
+    off_t size_elf = lseek(fd, 0, SEEK_END);
+    lseek(fd, 0, SEEK_SET);
+    void* elf_content = malloc(size_elf);
+    int read_status = read(fd, elf_content, size_elf);
+    if(read_status == -1) {
+        printf("ERROR: NOT ABLE TO READ THE ELF_FILE\n");
+        return;
     }
-    lseek(fd, ehdr->e_phoff + i * sizeof(Elf32_Phdr), SEEK_SET);
-    read(fd,phdr,sizeof(Elf32_Phdr));
+  
+    ehdr = (Elf32_Ehdr*)elf_content;
+    unsigned short tot_entries_phdr = ehdr->e_phnum;
+    unsigned short size_one_entry = ehdr->e_phentsize;
+    int i;
+    int flg = 0;
+    for(i = 0; i < tot_entries_phdr; i++) {
+        Elf32_Phdr* curr_entry = (Elf32_Phdr*)((char*)ehdr + ehdr->e_phoff + i * size_one_entry);
+        if(curr_entry->p_type == PT_LOAD && (curr_entry->p_vaddr<=(void*)ehdr->e_entry && (void*)ehdr->e_entry<= curr_entry->p_vaddr+curr_entry->p_memsz)) {
+            void* virtual_mem = mmap((void*)curr_entry->p_vaddr, curr_entry->p_memsz,
+                                     PROT_READ | PROT_WRITE | PROT_EXEC,
+                                     MAP_ANONYMOUS | MAP_PRIVATE, 0, 0);
+          
+            if(virtual_mem == MAP_FAILED) {
+                printf("ERROR: NOT ABLE TO ALLOCATE MEMORY FOR THE PROGRAM HEADER SEGMENTS\n");
+                return;
+            }
+          
+            lseek(fd, (off_t)curr_entry->p_offset, SEEK_SET);
+            int status = read(fd, virtual_mem, curr_entry->p_filesz);
+            if(status == -1) {
+                printf("ERROR: IN COPYING THE SEGMENTS CONTENT TO THE ELF_FILE\n");
+                return;
+            }
+          
+            if(curr_entry->p_filesz < curr_entry->p_memsz) {
+                // Zero-fill the remaining memory space
+                memset((void*)((char*)virtual_mem + curr_entry->p_filesz), 0,
+                       curr_entry->p_memsz - curr_entry->p_filesz);
+            }
+          
+            void* entry_point_address = (void*)((char*)virtual_mem + (ehdr->e_entry - curr_entry->p_vaddr));
+            StartFunction _start = (StartFunction)entry_point_address;
+            int result = _start();
+            printf("User _start return value = %d\n", result);
+          
+            
+            munmap(virtual_mem, curr_entry->p_memsz);
+            free(elf_content);
+        }
+    }
+}
+int main(int argc, char** argv) 
+{
+  if(argc != 2) {
+    printf("Usage: %s <ELF Executable> \n",argv[0]);
+    exit(1);
   }
-
-  // 3. Allocate memory of the size "p_memsz" using mmap function 
-  //    and then copy the segment content
-  void* virtual_mem = mmap((void*) phdr->p_vaddr,phdr->p_memsz,PROT_READ|PROT_WRITE|PROT_EXEC,MAP_PRIVATE|MAP_FIXED,fd,phdr->p_offset);   
-  // if (segment_addr == MAP_FAILED) {
-  //   perror("ERROR IN MAPPING SEGMENT");
-  //   free(ehdr);
-  //   close(fd);
-  //   return;
-  // }
-
-  // 4. Navigate to the entrypoint address into the segment loaded in the memory in above step
-  int (*_start)() = (int(*)())(ehdr->e_entry); 
-  // 5. Typecast the address to that of function pointer matching "_start" method in fib.c.
-  // 6. Call the "_start" method and print the value returned from the "_start"
-  _start();
-  int result = _start();
-  printf("User _start return value = %d\n",result);
+  // 1. carry out necessary checks on the input ELF file
+  // 2. passing it to the loader for carrying out the loading/execution
+  load_and_run_elf(argv);
+  // 3. invoke the cleanup routine inside the loader  
+  //loader_cleanup();
+  return 0;
 }
