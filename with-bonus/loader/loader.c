@@ -14,7 +14,7 @@ Elf32_Ehdr *ehdr;
 int fd;
 
 void loader_cleanup() {
-    // Add cleanup logic here if needed
+    
 }
 
 void load_and_run_elf(char** exe_path) {
@@ -59,7 +59,7 @@ void load_and_run_elf(char** exe_path) {
             }
           
             if(curr_entry->p_filesz < curr_entry->p_memsz) {
-                // Zero-fill the remaining memory space
+                
                 memset((void*)((char*)virtual_mem + curr_entry->p_filesz), 0,
                        curr_entry->p_memsz - curr_entry->p_filesz);
             }
