@@ -1,13 +1,12 @@
 #invoke make inside following directories and in this order: loader, launch, fib
 all:
+	@mkdir -p bin/
 	$(MAKE) -C loader
 	$(MAKE) -C launcher
 	$(MAKE) -C test
 	
 #move the lib_simpleloader.so and launch binaries inside bin directory
-	@mkdir -p bin/
-	@cp -p loader/lib_simpleloader.so bin/
-	@cp -p launcher/launch bin/
+	@cp -p launcher/launch bin/launch
 #Provide the command for cleanupp
 clean:
 	@rm -rf bin
